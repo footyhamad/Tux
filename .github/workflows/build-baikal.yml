@@ -1,0 +1,69 @@
+name: Build PS4 Baikal kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ps4-linux-6.15.y-baikal
+    paths:
+      - '**'
+      - '.github/workflows/build-baikal.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout Baikal branch
+        uses: actions/checkout@v4
+        with:
+          ref: ps4-linux-6.15.y-baikal
+          fetch-depth: 1
+
+      - name: Install kernel build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential flex gcc git libelf-dev libssl-dev \
+            dwarves python3 rsync
+
+      - name: Configure x86_64 PS4 kernel
+        run: |
+          make x86_64_defconfig
+          scripts/config --enable X86_EXTENDED_PLATFORM
+          scripts/config --enable X86_PS4
+          scripts/config --enable PCI
+          scripts/config --enable DRM
+          scripts/config --enable DRM_AMDGPU
+          scripts/config --enable DRM_FBDEV_EMULATION
+          scripts/config --enable FB
+          scripts/config --enable SOUND
+          make olddefconfig
+
+      - name: Compile kernel and modules
+        run: |
+          make -j"$(nproc)" bzImage modules
+          make modules_install INSTALL_MOD_PATH="$GITHUB_WORKSPACE/out"
+
+      - name: Stage build outputs
+        run: |
+          mkdir -p out/kernel
+          cp arch/x86/boot/bzImage out/kernel/
+          cp vmlinux System.map .config out/kernel/
+          printf '%s\n' "$(git rev-parse HEAD)" > out/kernel/commit.txt
+          printf '%s\n' "$(make -s kernelversion)" > out/kernel/kernel-version.txt
+          tar -czf out/ps4-baikal-kernel-modules.tar.gz -C out lib
+
+      - name: Upload kernel and modules
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps4-baikal-linux-6.15-kernel
+          path: |
+            out/kernel/
+            out/ps4-baikal-kernel-modules.tar.gz
+          if-no-files-found: error
+          retention-days: 14
